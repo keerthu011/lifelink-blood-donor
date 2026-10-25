@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LifeLink – Blood Donor Network</title>
+<style>
+:root{--bg:#fff8f6;--ink:#2a1215;--mute:#7b5a5e;--red:#c8102e;--deep:#7a0f1f;--card:#fff;--line:#efd6d6;--ok:#1f7a4d}
+@media (prefers-color-scheme:dark){:root{--bg:#1c0c0f;--ink:#f8e9e9;--mute:#c9a3a8;--card:#2a1317;--line:#4a2429;--red:#ff4d63}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,Segoe UI,sans-serif}
+h1,h2,h3{font-family:Georgia,serif;margin:0 0 .4em}
+header{background:var(--deep);color:#fff;padding:18px 16px 0}
+header h1{font-size:1.7rem;margin:0}header p{margin:2px 0 12px;opacity:.85;font-size:.95rem}
+nav{display:flex;gap:4px;overflow-x:auto}
+nav button{background:none;border:0;color:#f3caca;padding:10px 14px;font:inherit;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+nav button.on{color:#fff;border-color:#fff;font-weight:600}
+main{max-width:860px;margin:0 auto;padding:18px 16px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:0 0 12px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+label{display:block;font-size:.85rem;color:var(--mute);margin:10px 0 3px}
+input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+button.btn{background:var(--red);color:#fff;border:0;border-radius:8px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer;margin-top:12px}
+button.btn.alt{background:none;color:var(--red);border:1px solid var(--red)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--red);outline-offset:2px}
+.bg{display:inline-block;background:var(--red);color:#fff;font-weight:700;border-radius:6px;padding:2px 9px;margin-right:8px}
+.tag{font-size:.8rem;border-radius:20px;padding:2px 10px;border:1px solid var(--line);color:var(--mute)}
+.tag.ok{color:var(--ok);border-color:var(--ok)}.tag.crit{color:var(--red);border-color:var(--red)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.bar{height:14px;background:var(--red);border-radius:4px;min-width:2px}
+.stat{font:700 2rem Georgia,serif;color:var(--red)}
+.mute{color:var(--mute);font-size:.9rem}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--deep);color:#fff;padding:10px 18px;border-radius:8px;display:none;max-width:90%}
+</style>
+</head>
+<body>
+<header>
+  <h1>LifeLink</h1>
+  <p>When a patient needs blood, the right donors hear about it first.</p>
+  <nav id="nav"></nav>
+</header>
+<main id="main"></main>
+<div class="toast" id="toast"></div>
+
+<script>
+const GROUPS=['A+','A-','B+','B-','AB+','AB-','O+','O-'];
+// who can donate to whom (donor -> recipients)
+const GIVES={'O-':GROUPS,'O+':['O+','A+','B+','AB+'],'A-':['A-','A+','AB-','AB+'],'A+':['A+','AB+'],
+ 'B-':['B-','B+','AB-','AB+'],'B+':['B+','AB+'],'AB-':['AB-','AB+'],'AB+':['AB+']};
+const day=86400000,ago=n=>new Date(Date.now()-n*day).toISOString().slice(0,10);
+const SEED={donors:[
+ {id:1,name:'Arjun Reddy',group:'O-',city:'Chennai',phone:'98400 11111',email:'arjun@demo.in',last:ago(150),avail:true},
+ {id:2,name:'Priya Sharma',group:'A+',city:'Chennai',phone:'98400 22222',email:'priya@demo.in',last:ago(120),avail:true},
+ {id:3,name:'Farhan Ali',group:'B-',city:'Madurai',phone:'98400 33333',email:'farhan@demo.in',last:'',avail:true},
+ {id:4,name:'Meena Iyer',group:'O+',city:'Chennai',phone:'98400 44444',email:'meena@demo.in',last:ago(30),avail:true},
+ {id:5,name:'Karthik S',group:'AB+',city:'Coimbatore',phone:'98400 55555',email:'karthik@demo.in',last:ago(200),avail:false},
+ {id:6,name:'Divya R',group:'A-',city:'Madurai',phone:'98400 66666',email:'divya@demo.in',last:'',avail:true}],
+ requests:[],notes:[],nid:1,rid:1,did:7};
+let S;try{S=JSON.parse(localStorage.getItem('lifelink'))}catch(e){}
+S=S||JSON.parse(JSON.stringify(SEED));
+const save=()=>{try{localStorage.setItem('lifelink',JSON.stringify(S))}catch(e){}};
+const $=s=>document.querySelector(s);
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const days=d=>d?Math.floor((Date.now()-new Date(d))/day):null;
+const eligible=d=>!d.last||days(d.last)>=90;
+function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2800)}
+
+const TABS=[['home','Find donors'],['reg','Become a donor'],['req','Request blood'],['inbox','Donor inbox'],['admin','Admin']];
+let tab='home',who=1;
+function go(t){tab=t;render()}
+function render(){
+ $('#nav').innerHTML=TABS.map(([k,v])=>`<button class="${k===tab?'on':''}" onclick="go('${k}')">${v}</button>`).join('');
+ $('#main').innerHTML=views[tab]();
+}
+const opts=(a,sel)=>a.map(x=>`<option ${x===sel?'selected':''}>${x}</option>`).join('');
+
+const views={
+home(){return `<h2>Find compatible donors</h2>
+ <div class="card grid"><div><label>Blood group needed</label><select id="fg" onchange="filt()"><option value="">All</option>${opts(GROUPS)}</select></div>
+ <div><label>City</label><input id="fc" placeholder="e.g. Chennai" oninput="filt()"></div></div>
+ <div id="list"></div>`},
+reg(){return `<h2>Become a donor</h2><form class="card" onsubmit="addDonor(event)">
+ <label>Full name</label><input id="n" required>
+ <div class="grid"><div><label>Blood group</label><select id="g">${opts(GROUPS)}</select></div>
+ <div><label>City</label><input id="c" required></div></div>
+ <div class="grid"><div><label>Phone</label><input id="p" required></div><div><label>Email</label><input id="e" type="email" required></div></div>
+ <label>Last donation date (leave empty if never)</label><input id="l" type="date" max="${ago(0)}">
+ <button class="btn">Register as donor</button></form>`},
+req(){return `<h2>Request blood</h2><form class="card" onsubmit="addReq(event)">
+ <label>Patient name</label><input id="pn" required>
+ <div class="grid"><div><label>Blood group</label><select id="pg">${opts(GROUPS)}</select></div>
+ <div><label>Units needed</label><input id="pu" type="number" min="1" value="1" required></div></div>
+ <div class="grid"><div><label>Hospital</label><input id="ph" required></div><div><label>City</label><input id="pc" required></div></div>
+ <div class="grid"><div><label>Contact number</label><input id="pt" required></div>
+ <div><label>Urgency</label><select id="pur">${opts(['Normal','Urgent','Critical'])}</select></div></div>
+ <button class="btn">Send request to donors</button></form>
+ <h3>Your requests</h3>${S.requests.length?S.requests.slice().reverse().map(reqCard).join(''):'<p class="mute">No requests yet. Fill the form above to alert matching donors.</p>'}`},
+inbox(){const d=S.donors.find(x=>x.id==who),n=S.notes.filter(x=>x.donor==who).reverse();
+ return `<h2>Donor inbox</h2><p class="mute">Demo only: choose a donor to see the alerts they would get by email, SMS and in-app.</p>
+ <div class="card"><label>Viewing as</label><select onchange="who=this.value;render()">${S.donors.map(x=>`<option value="${x.id}" ${x.id==who?'selected':''}>${esc(x.name)} (${x.group}, ${esc(x.city)})</option>`).join('')}</select>
+ <div class="row" style="margin-top:10px"><span>${d.avail?'Available to donate':'Marked unavailable'}</span>
+ <button class="btn alt" style="margin:0" onclick="toggleAvail(${d.id})">${d.avail?'Mark unavailable':'Mark available'}</button></div></div>
+ ${n.length?n.map(noteCard).join(''):'<p class="mute">No alerts for this donor yet. Create a blood request in the same city with a compatible group.</p>'}`},
+admin(){const by=GROUPS.map(g=>[g,S.donors.filter(d=>d.group===g).length]),mx=Math.max(1,...by.map(x=>x[1]));
+ const open=S.requests.filter(r=>!r.donor).length;
+ return `<h2>Admin overview</h2><div class="grid">
+ <div class="card"><div class="stat">${S.donors.length}</div>Registered donors</div>
+ <div class="card"><div class="stat">${S.donors.filter(d=>d.avail&&eligible(d)).length}</div>Ready to donate now</div>
+ <div class="card"><div class="stat">${open}</div>Open requests</div>
+ <div class="card"><div class="stat">${S.requests.length-open}</div>Requests fulfilled</div></div>
+ <div class="card"><h3>Donors by blood group</h3>${by.map(([g,c])=>`<div class="row" style="flex-wrap:nowrap;margin:6px 0"><b style="width:34px">${g}</b><div style="flex:1"><div class="bar" style="width:${c/mx*100}%"></div></div><span>${c}</span></div>`).join('')}</div>
+ <div class="card"><button class="btn alt" style="margin:0" onclick="reset()">Reset demo data</button></div>`}
+};
+
+function filt(){const g=$('#fg').value,c=$('#fc').value.trim().toLowerCase();
+ const r=S.donors.filter(d=>(!g||GIVES[d.group].includes(g))&&(!c||d.city.toLowerCase().includes(c)));
+ $('#list').innerHTML=r.length?r.map(d=>`<div class="card row"><div><span class="bg">${d.group}</span><b>${esc(d.name)}</b><div class="mute">${esc(d.city)} · ${d.last?'Last donated '+days(d.last)+' days ago':'No donation yet'}</div></div>
+  <span class="tag ${d.avail&&eligible(d)?'ok':''}">${!d.avail?'Unavailable':eligible(d)?'Can donate now':'Rest period'}</span></div>`).join('')
+  :'<p class="mute">No donors match. Try another city or clear the blood group.</p>'}
+function addDonor(e){e.preventDefault();
+ S.donors.push({id:S.did++,name:$('#n').value,group:$('#g').value,city:$('#c').value,phone:$('#p').value,email:$('#e').value,last:$('#l').value,avail:true});
+ save();toast('You are registered. Thank you!');who=S.did-1;go('home')}
+function addReq(e){e.preventDefault();
+ const r={id:S.rid++,patient:$('#pn').value,group:$('#pg').value,units:$('#pu').value,hospital:$('#ph').value,city:$('#pc').value,phone:$('#pt').value,urgency:$('#pur').value,donor:null,declined:[]};
+ const m=S.donors.filter(d=>d.avail&&eligible(d)&&GIVES[d.group].includes(r.group)&&d.city.toLowerCase()===r.city.trim().toLowerCase());
+ m.forEach(d=>S.notes.push({id:S.nid++,donor:d.id,req:r.id}));
+ S.requests.push(r);save();
+ toast(m.length?`${m.length} matching donor(s) alerted by email, SMS and in-app`:'No matching donors in this city yet');render()}
+function reqCard(r){const d=S.donors.find(x=>x.id===r.donor);
+ return `<div class="card"><div class="row"><div><span class="bg">${r.group}</span><b>${esc(r.patient)}</b></div><span class="tag ${r.urgency==='Critical'?'crit':''}">${r.urgency}</span></div>
+ <div class="mute">${r.units} unit(s) · ${esc(r.hospital)}, ${esc(r.city)}</div>
+ ${d?`<p><span class="tag ok">Donor found</span> ${esc(d.name)} · ${esc(d.phone)} · ${esc(d.email)}</p>`:'<p><span class="tag">Waiting for a donor</span></p>'}</div>`}
+function noteCard(n){const r=S.requests.find(x=>x.id===n.req);if(!r)return'';
+ const mine=r.donor==n.donor,taken=r.donor&&!mine,no=r.declined.includes(n.donor);
+ return `<div class="card"><div class="row"><div><span class="bg">${r.group}</span><b>${r.units} unit(s) needed at ${esc(r.hospital)}</b></div><span class="tag ${r.urgency==='Critical'?'crit':''}">${r.urgency}</span></div>
+ <div class="mute">${esc(r.city)} · Sent by email, SMS and in-app (simulated)</div>
+ ${mine?'<p><span class="tag ok">You accepted</span> Contact the requester: '+esc(r.phone)+'</p>':taken?'<p class="mute">Another donor has already accepted.</p>':no?'<p class="mute">You declined this request.</p>':
+ `<button class="btn" onclick="reply(${r.id},${n.donor},true)">Accept</button> <button class="btn alt" onclick="reply(${r.id},${n.donor},false)">Decline</button>`}</div>`}
+function reply(rid,did,ok){const r=S.requests.find(x=>x.id===rid),d=S.donors.find(x=>x.id===did);
+ if(ok){r.donor=did;d.last=ago(0);toast('Thank you! The requester can now see your contact.')}else r.declined.push(did);save();render()}
+function toggleAvail(id){const d=S.donors.find(x=>x.id===id);d.avail=!d.avail;save();render()}
+function reset(){if(confirm('Reset all demo data?')){S=JSON.parse(JSON.stringify(SEED));save();render()}}
+render();if(tab==='home')filt();
+const _r=render;render=function(){_r();if(tab==='home')filt()};
+</script>
+</body>
+</html>
